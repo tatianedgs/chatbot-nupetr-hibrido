@@ -19,11 +19,9 @@ from PIL import UnidentifiedImageError
 from src.rag import chunk_pdf, build_or_update_index, retrieve
 from src.llm_router import make_embeddings, make_chain_openai, LiteLocal
 
-# Exportar PDF (conversa)
-from reportlab.lib.pagesizes import letter
-from reportlab.lib.styles import getSampleStyleSheet
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Image as RLImage
-from reportlab.lib.units import inch
+from fpdf import FPDF
+from html import escape
+
 
 
 # -----------------------------
@@ -83,23 +81,32 @@ def _on_page(canvas, doc):
     except Exception:
         pass
 
-def export_chat_to_pdf(messages) -> bytes:
-    """Gera um PDF simples com pares Você/Assistente."""
-    buf = BytesIO()
-    doc = SimpleDocTemplate(buf, pagesize=letter)
-    styles = getSampleStyleSheet()
-    body = styles["BodyText"]; body.alignment = 4  # justify
+def export_chat(messages):
+    """Tenta gerar PDF com fpdf2; se falhar, cai para HTML."""
+    try:
+        pdf = FPDF()
+        pdf.set_auto_page_break(auto=True, margin=15)
+        pdf.add_page()
+        # Core fonts do PDF não são Unicode; para acentos funciona bem com Latin-1
+        pdf.set_font("Arial", size=12)
+        for m in messages:
+            who = "Você" if m["role"] == "user" else "Assistente"
+            # converte para latin-1 com fallback simples
+            line = f"{who}: {m['content']}".encode("latin-1", "replace").decode("latin-1")
+            for chunk in line.split("\n"):
+                pdf.multi_cell(0, 6, chunk)
+            pdf.ln(2)
+        return "pdf", pdf.output(dest="S").encode("latin-1", "replace")
+    except Exception:
+        # Fallback: exporta HTML
+        html = ["<meta charset='utf-8'><style>body{font-family:Arial, sans-serif;line-height:1.4}</style>"]
+        for m in messages:
+            who = "Você" if m["role"] == "user" else "Assistente"
+            body = escape(m["content"]).replace("\n", "<br>")
+            html.append(f"<p><strong>{who}:</strong> {body}</p>")
+        data = "<html><head>" + "".join(html[:1]) + "</head><body>" + "".join(html[1:]) + "</body></html>"
+        return "html", data.encode("utf-8")
 
-    story = [Spacer(1, 0.5*inch)]
-    for m in messages:
-        who = "Você" if m["role"] == "user" else "Assistente"
-        story.append(Paragraph(f"<b>{who}:</b> {m['content']}", body))
-        story.append(Spacer(1, 0.15*inch))
-
-    doc.build(story, onFirstPage=_on_page, onLaterPages=_on_page)
-    pdf = buf.getvalue()
-    buf.close()
-    return pdf
 
 
 # ---------------
@@ -158,20 +165,21 @@ with st.sidebar:
         st.session_state.openai_key = ''
 
     # Processar PDFs
-    if st.button("🔄 Processar PDFs") and pdfs:
-        with st.spinner("Processando PDFs..."):
-            embeddings = make_embeddings(st.session_state.mode, st.session_state.openai_key)
-            all_chunks, all_metas = [], []
-            for pdf in pdfs:
-                b = pdf.read(); pdf.seek(0)
-                chunks, metas = chunk_pdf(b, pdf.name)
-                all_chunks += chunks; all_metas += metas
-            if all_chunks:
-                st.session_state.kb = build_or_update_index(st.session_state.kb, all_chunks, all_metas, embeddings)
-                st.session_state.pdfs_processed = True
-                st.success("PDFs processados. Preencha os filtros e pergunte no chat.")
-            else:
-                st.warning("Nenhum texto legível extraído.")
+    if st.button("📥 Exportar conversa"):
+    if st.session_state.messages:
+        ftype, payload = export_chat(st.session_state.messages)
+        b64 = base64.b64encode(payload).decode()
+        if ftype == "pdf":
+            mime, fname = "application/pdf", "chat_nupetr.pdf"
+        else:
+            mime, fname = "text/html", "chat_nupetr.html"
+        st.markdown(
+            f'<a href="data:{mime};base64,{b64}" download="{fname}">Clique aqui para baixar ({fname})</a>',
+            unsafe_allow_html=True
+        )
+    else:
+        st.info("Nada para exportar ainda 🙂")
+
 
     # Ações do chat (limpar/exportar)
     st.subheader("💬 Ações do chat")
@@ -263,4 +271,5 @@ if user_q:
 
         # Guarda no histórico
         st.session_state.messages.append({"role": "assistant", "content": answer})
+
 
