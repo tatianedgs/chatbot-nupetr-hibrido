@@ -1,36 +1,59 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """
 NUPETR/IDEMA — Chat de Parecer Técnico (RAG)
-- Mantém FAISS em memória (sem persistência)
-- Botões: limpar histórico + exportar conversa (PDF)
-- Sidebar: instruções para obter chave OpenAI e usar Secrets no Streamlit Cloud
-- Tema em tons de verde do IDEMA + banner centralizado
+- FAISS em memória (sem persistência)
+- Botões: limpar histórico + exportar conversa (PDF via fpdf2)
+- Sidebar: instruções para obter chave OpenAI e links oficiais
+- Tema IDEMA (tons de verde) + logo centralizado + bolhas de chat
 """
+
+# Evita conflito OpenMP em Windows/CPU
 import os
-os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")  # evita conflito OpenMP em Windows/CPU
+os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
 
 import base64
 from io import BytesIO
+from html import escape
 
 import streamlit as st
 from PIL import UnidentifiedImageError
+from fpdf import FPDF
 
-# RAG/LLM (seu código local)
+# Módulos próprios (RAG + LLM router)
 from src.rag import chunk_pdf, build_or_update_index, retrieve
 from src.llm_router import make_embeddings, make_chain_openai, LiteLocal
 
-from fpdf import FPDF
-from html import escape
-
-
 
 # -----------------------------
-# Página e tema (tons de verde)
+# Página / Tema (tons de verde)
 # -----------------------------
-st.set_page_config(page_title="NUPETR/IDEMA — Chat de Parecer Técnico", page_icon="🛢️", layout="wide")
+st.set_page_config(
+    page_title="NUPETR/IDEMA — Chat de Parecer Técnico",
+    page_icon="🛢️",
+    layout="wide"
+)
+
+# CSS do app (cores, banner, bolhas)
 st.markdown("""
 <style>
-/* balões com leve distinção de fundo */
+:root{
+  --verde1:#2E7D32; /* primário */
+  --verde2:#66BB6A; /* gradiente */
+  --verde-bg:#F4F9F4; /* fundo */
+  --verde-sec:#E8F3E8; /* cards */
+  --texto:#0F2310;
+}
+[data-testid="stAppViewContainer"]{
+  background: var(--verde-bg);
+}
+.nupetr-header{
+  padding:16px 20px; margin:10px 0 14px 0; border-radius:14px;
+  color:#fff; font-weight:700; font-size:20px;
+  background: linear-gradient(90deg,var(--verde1),var(--verde2));
+  display:flex; align-items:center; justify-content:center; gap:10px;
+}
+
+/* Bolhas do chat */
 .user-bubble {
   background: #E6F4EA;  /* verde bem claro */
   border-radius: 12px;
@@ -42,12 +65,15 @@ st.markdown("""
   padding: 10px 12px;
   border: 1px solid #DDE6DD;
 }
-
-/* dá um respiro entre as mensagens */
 .chat-gap { margin-bottom: 8px; }
+
+/* Caixa lateral de ajuda */
+.help-box{
+  background: var(--verde-sec);
+  padding: 10px 12px; border-radius: 10px; font-size: 0.92rem;
+}
 </style>
 """, unsafe_allow_html=True)
-
 
 
 # -----------------
@@ -56,57 +82,63 @@ st.markdown("""
 if 'kb' not in st.session_state: st.session_state.kb = None
 if 'pdfs_processed' not in st.session_state: st.session_state.pdfs_processed = False
 if 'messages' not in st.session_state: st.session_state.messages = []
-if 'mode' not in st.session_state: st.session_state.mode = 'leve'   # 'openai' | 'leve'
+if 'mode' not in st.session_state: st.session_state.mode = 'leve'     # 'openai' | 'leve'
 if 'openai_key' not in st.session_state: st.session_state.openai_key = ''
+if 'openai_model' not in st.session_state: st.session_state.openai_model = 'gpt-4o-mini'
+if 'lite_model' not in st.session_state: st.session_state.lite_model = None
 
 
 # ---------------------------------
 # Utilidades: limpar e exportar PDF
 # ---------------------------------
 def clear_history():
-    st.session_state.messages = [{"role": "assistant", "content": "Como posso ajudar com suas dúvidas sobre pareceres?"}]
+    st.session_state.messages = [{
+        "role": "assistant",
+        "content": "Como posso ajudar com suas dúvidas sobre pareceres?"
+    }]
 
-def _on_page(canvas, doc):
-    """Desenha o logo no topo de cada página do PDF exportado (se existir)."""
-    img_path = "img/idema.jpeg"
-    try:
-        from PIL import Image as PILImage
-        pil = PILImage.open(img_path)
-        w,h = pil.size
-        target_w = 1.2 * inch
-        target_h = target_w * h / w
-        img = RLImage(img_path, width=target_w, height=target_h)
-        x = (doc.width - target_w)/2 + doc.leftMargin  # centraliza
-        img.drawOn(canvas, x, doc.height + 1 * inch)
-    except Exception:
-        pass
+def _sanitize_for_pdf(text: str) -> str:
+    """
+    fpdf2 usa fontes core (Latin-1). Para evitar caracteres quebrados,
+    convertemos para latin-1 com replacement.
+    """
+    return text.encode("latin-1", "replace").decode("latin-1")
 
-def export_chat(messages):
-    """Tenta gerar PDF com fpdf2; se falhar, cai para HTML."""
-    try:
-        pdf = FPDF()
-        pdf.set_auto_page_break(auto=True, margin=15)
-        pdf.add_page()
-        # Core fonts do PDF não são Unicode; para acentos funciona bem com Latin-1
-        pdf.set_font("Arial", size=12)
-        for m in messages:
-            who = "Você" if m["role"] == "user" else "Assistente"
-            # converte para latin-1 com fallback simples
-            line = f"{who}: {m['content']}".encode("latin-1", "replace").decode("latin-1")
-            for chunk in line.split("\n"):
-                pdf.multi_cell(0, 6, chunk)
-            pdf.ln(2)
-        return "pdf", pdf.output(dest="S").encode("latin-1", "replace")
-    except Exception:
-        # Fallback: exporta HTML
-        html = ["<meta charset='utf-8'><style>body{font-family:Arial, sans-serif;line-height:1.4}</style>"]
-        for m in messages:
-            who = "Você" if m["role"] == "user" else "Assistente"
-            body = escape(m["content"]).replace("\n", "<br>")
-            html.append(f"<p><strong>{who}:</strong> {body}</p>")
-        data = "<html><head>" + "".join(html[:1]) + "</head><body>" + "".join(html[1:]) + "</body></html>"
-        return "html", data.encode("utf-8")
+def export_chat_to_pdf(messages) -> bytes:
+    """
+    Gera PDF simples com pares Você/Assistente.
+    Cabeçalho com logo centralizado se existir.
+    """
+    pdf = FPDF(format="A4")
+    pdf.set_auto_page_break(auto=True, margin=15)
+    pdf.add_page()
 
+    # Logo centralizado (opcional)
+    logo_path = "img/idema.jpeg"
+    if os.path.exists(logo_path):
+        try:
+            # Largura página ~210mm. Logo ~30mm de largura.
+            pdf.image(logo_path, x=(210-30)/2, y=12, w=30)
+            pdf.ln(30)  # espaço após logo
+        except Exception:
+            pdf.ln(10)
+
+    pdf.set_font("Helvetica", "B", 14)
+    pdf.cell(0, 10, _sanitize_for_pdf("NUPETR/IDEMA — Conversa do Chat"), ln=1, align="C")
+    pdf.set_font("Helvetica", "", 11)
+    pdf.ln(2)
+
+    for m in messages:
+        who = "Você" if m["role"] == "user" else "Assistente"
+        txt = f"{who}: {m['content']}"
+        pdf.multi_cell(0, 6, _sanitize_for_pdf(txt))
+        pdf.ln(2)
+
+    # Retorna bytes
+    out = BytesIO()
+    pdf_bytes = pdf.output(dest="S").encode("latin-1", "ignore")
+    out.write(pdf_bytes)
+    return out.getvalue()
 
 
 # ---------------
@@ -127,6 +159,16 @@ with st.sidebar:
     st.title("Pareceres Técnicos – NUPETR")
     st.caption("Assistente RAG para PDFs internos")
 
+    # Ajuda rápida (caixa fixa)
+    st.markdown("""
+<div class="help-box">
+<b>Como usar</b><br/>
+1) Faça upload dos PDFs (padrão <i>tipoLicenca_tipoEmpreendimento.pdf</i>).<br/>
+2) Escolha o modelo (OpenAI com chave, ou Leve sem chave).<br/>
+3) Clique em <b>Processar PDFs</b> e depois pergunte no chat.
+</div>
+""", unsafe_allow_html=True)
+
     # Upload de PDFs
     st.subheader("📄 PDFs")
     pdfs = st.file_uploader(
@@ -139,47 +181,46 @@ with st.sidebar:
     modo = st.radio("Escolha o modo:", ["OpenAI (com chave)", "Modelo Leve (sem chave)"])
     if modo.startswith("OpenAI"):
         st.session_state.mode = 'openai'
-        st.session_state.openai_key = st.text_input("OPENAI_API_KEY", type="password", help="Cole sua chave (começa com sk-)")
-        # Ajuda rápida para obter a chave
+        st.session_state.openai_key = st.text_input(
+            "OPENAI_API_KEY", type="password", help="Cole a chave (começa com sk-)"
+        )
+        # Seleção do modelo (nomes amigáveis aceitos; llm_router faz alias)
+        st.session_state.openai_model = st.selectbox(
+            "Modelo OpenAI",
+            ["gpt-5", "gpt-5-mini", "gpt-5-nano", "gpt-4o-mini", "gpt-4.1"],
+            index=0,
+            help="gpt-5* serão mapeados para um modelo estável automaticamente."
+        )
         with st.expander("🔑 Como obter sua OpenAI API Key", expanded=False):
             st.markdown(
-                "- Acesse a página **API Keys** da OpenAI e clique em **Create new secret key**.\n"
-                "- Copie a chave (formato `sk-...`) e cole no campo acima.\n"
-                "- Guarde sua chave em local seguro — não compartilhe.",
+                "- Acesse **https://platform.openai.com**\n"
+                "- No menu, **API Keys** → **Create new secret key**\n"
+                "- Copie a chave (formato `sk-...`) e cole no campo acima\n"
+                "- No Streamlit Cloud, salve em **Settings → Secrets** para segurança."
             )
             st.link_button("Abrir página de API Keys", "https://platform.openai.com/account/api-keys")
-            st.caption("Dica: você também pode seguir o passo a passo do Quickstart da OpenAI.")
-            st.link_button("Quickstart: criar/exportar a API key", "https://platform.openai.com/docs/quickstart/create-and-export-an-api-key")
-            st.caption("Fontes oficiais: API Keys e Quickstart.")
-        # # Como usar no Streamlit Cloud (secrets)
-        # with st.expander("☁️ Usar a chave como Secret no Streamlit Cloud"):
-        #     st.markdown(
-        #         "No deploy via Streamlit Cloud, **não** commit sua chave no repositório.\n\n"
-        #         "1. No painel do app → **Settings** → **Advanced settings** → **Secrets**\n"
-        #         "2. Adicione:\n"
-        #         "```toml\nOPENAI_API_KEY = \"sk-xxx\"\n```\n"
-        #         "3. No código, você pode ler com `st.secrets[\"OPENAI_API_KEY\"]`."
-        #     )
+            st.link_button("Guia rápido (oficial)", "https://platform.openai.com/docs/quickstart/create-and-export-an-api-key")
     else:
         st.session_state.mode = 'leve'
         st.session_state.openai_key = ''
 
     # Processar PDFs
-    if st.button("📥 Exportar conversa"):
-    if st.session_state.messages:
-        ftype, payload = export_chat(st.session_state.messages)
-        b64 = base64.b64encode(payload).decode()
-        if ftype == "pdf":
-            mime, fname = "application/pdf", "chat_nupetr.pdf"
-        else:
-            mime, fname = "text/html", "chat_nupetr.html"
-        st.markdown(
-            f'<a href="data:{mime};base64,{b64}" download="{fname}">Clique aqui para baixar ({fname})</a>',
-            unsafe_allow_html=True
-        )
-    else:
-        st.info("Nada para exportar ainda 🙂")
-
+    if st.button("🔄 Processar PDFs") and pdfs:
+        with st.spinner("Processando PDFs..."):
+            embeddings = make_embeddings(st.session_state.mode, st.session_state.openai_key)
+            all_chunks, all_metas = [], []
+            for pdf in pdfs:
+                b = pdf.read(); pdf.seek(0)
+                chunks, metas = chunk_pdf(b, pdf.name)
+                all_chunks += chunks; all_metas += metas
+            if all_chunks:
+                st.session_state.kb = build_or_update_index(
+                    st.session_state.kb, all_chunks, all_metas, embeddings
+                )
+                st.session_state.pdfs_processed = True
+                st.success("PDFs processados. Preencha os filtros e pergunte no chat.")
+            else:
+                st.warning("Nenhum texto legível extraído.")
 
     # Ações do chat (limpar/exportar)
     st.subheader("💬 Ações do chat")
@@ -194,9 +235,19 @@ with st.sidebar:
 
 
 # -------------
-# Banner topo
+# Cabeçalho topo
 # -------------
-st.markdown('<div class="nupetr-banner">🛢️ NUPETR/IDEMA — Chat de Parecer Técnico</div>', unsafe_allow_html=True)
+# Logo centralizado + banner
+colL, colC, colR = st.columns([1,2,1])
+with colC:
+    # Tenta exibir a logo central; se não existir, só o banner
+    logo_path = "img/idema.jpeg"
+    if os.path.exists(logo_path):
+        try:
+            st.image(logo_path, width=120)
+        except UnidentifiedImageError:
+            pass
+st.markdown('<div class="nupetr-header">🛢️ NUPETR/IDEMA — Chat de Parecer Técnico</div>', unsafe_allow_html=True)
 st.caption("As respostas citam trechos do PDF. Valide sempre as informações.")
 
 # --------
@@ -212,35 +263,33 @@ with c2:
 # Histórico + Chat principal
 # -------------------------
 if not st.session_state.messages:
-    st.session_state.messages = [{"role": "assistant", "content": "Como posso ajudar com suas dúvidas sobre pareceres?"}]
+    clear_history()
 
+# Render histórico com bolhas
 for m in st.session_state.messages:
     if m["role"] == "user":
         with st.chat_message("user", avatar="👤"):
-            st.markdown(f'<div class="user-bubble chat-gap">{m["content"]}</div>', unsafe_allow_html=True)
+            st.markdown(f'<div class="user-bubble chat-gap">{escape(m["content"])}</div>', unsafe_allow_html=True)
     else:
-        with st.chat_message("assistant"):
-            st.markdown(f'<div class="assistant-bubble chat-gap">{m["content"]}</div>', unsafe_allow_html=True)
-   
+        with st.chat_message("assistant", avatar="🛢️"):
+            st.markdown(f'<div class="assistant-bubble chat-gap">{escape(m["content"])}</div>', unsafe_allow_html=True)
 
-
-# Campo de entrada SEM usar ainda a variável
+# Campo de entrada
 user_q = st.chat_input("Digite sua pergunta aqui…")
 
-# Só usamos user_q se o usuário realmente enviou algo nesta rodada
+# Tratamento da nova pergunta
 if user_q:
-    # Mostra a bolha do usuário imediatamente
+    # Mostra a pergunta do usuário
     with st.chat_message("user", avatar="👤"):
-        st.markdown(f'<div class="user-bubble chat-gap">{user_q}</div>', unsafe_allow_html=True)
-
+        st.markdown(f'<div class="user-bubble chat-gap">{escape(user_q)}</div>', unsafe_allow_html=True)
     # Guarda no histórico
     st.session_state.messages.append({"role": "user", "content": user_q})
 
-    # Verifica se já temos base vetorial
+    # Verifica base vetorial
     if st.session_state.kb is None:
-        st.warning("⚠️ Primeiro, carregue e processe PDFs no menu lateral.")
+        st.warning("⚠️ Primeiro, carregue e processe PDFs na barra lateral.")
     else:
-        # Recupera contexto
+        # Recupera contexto (página dominante)
         docs, page_num = retrieve(
             st.session_state.kb,
             user_q,
@@ -254,22 +303,28 @@ if user_q:
             contexto = docs[0].page_content
             if st.session_state.mode == 'openai' and st.session_state.openai_key:
                 try:
-                    chain = make_chain_openai(st.session_state.openai_key)
+                    chain = make_chain_openai(
+                        st.session_state.openai_key,
+                        model=st.session_state.openai_model,
+                        temperature=0
+                    )
                     answer = chain.run(input_documents=docs, question=user_q).strip()
                 except Exception:
                     answer = "Tive um problema ao chamar a OpenAI. Verifique a chave e a internet e tente novamente."
             else:
                 # Modo leve (sem chave)
-                if 'lite_model' not in st.session_state:
-                    with st.spinner("Carregando modelo leve... (pode demorar na primeira vez)"):
-                        st.session_state.lite_model = LiteLocal("google/mt5-small")
-                answer = st.session_state.lite_model.answer(contexto, user_q)
+                try:
+                    if st.session_state.lite_model is None:
+                        with st.spinner("Carregando modelo leve... (primeira vez pode demorar)"):
+                            # sem parâmetro -> usa distilgpt2 (compatível no Streamlit Cloud)
+                            st.session_state.lite_model = LiteLocal()
+                    answer = st.session_state.lite_model.answer(contexto, user_q)
+                except Exception as e:
+                    answer = "Não consegui usar o modelo leve nesta sessão."
 
-        # Mostra a resposta com a bolha/ícone
-        with st.chat_message("assistant"):
-            st.markdown(f'<div class="assistant-bubble chat-gap">{answer}</div>', unsafe_allow_html=True)
+        # Mostra a resposta com a bolha
+        with st.chat_message("assistant", avatar="🛢️"):
+            st.markdown(f'<div class="assistant-bubble chat-gap">{escape(answer)}</div>', unsafe_allow_html=True)
 
         # Guarda no histórico
         st.session_state.messages.append({"role": "assistant", "content": answer})
-
-
