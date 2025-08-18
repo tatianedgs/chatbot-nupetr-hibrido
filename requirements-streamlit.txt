@@ -1,24 +1,14 @@
-# App web
+# --- Básico do app web ---
 streamlit==1.37.1
 
-# RAG e PDF
-langchain==0.2.13
-langchain-community==0.2.12
-langchain-openai==0.1.21
-openai>=1.30,<2
-sentence-transformers==2.7.0
-faiss-cpu==1.8.0.post1
+# PDF e exportador de PDF
 PyPDF2==3.0.1
 pymupdf==1.24.9
+reportlab==3.6.13
 pillow==10.4.0
 
-# Modelinho local leve (sem chave) — usa GPT-2 (não precisa sentencepiece)
-transformers==4.43.3
-accelerate==0.33.0
-torch==2.8.0
+# OpenAI (modo com chave)
+openai>=1.30.0
 
-# Utilidades
-python-dotenv==1.0.1
-
-# Exportar PDF sem libs nativas (substitui o reportlab)
-fpdf2==2.7.9
+# Recuperação sem FAISS/transformers (100% Python)
+scikit-learn==1.7.1
