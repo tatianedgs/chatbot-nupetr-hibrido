@@ -1,26 +1,29 @@
-﻿pydantic==2.5.3
-pydantic-core==2.14.6
+# App web (Streamlit Cloud)
+
+streamlit==1.37.1
+
+# LangChain + OpenAI
 langchain==0.2.13
 langchain-community==0.2.12
 langchain-openai==0.1.21
-openai>=1.30.0,<2
+openai>=1.30,<2
 
-# Web
-streamlit==1.37.1
-
-# RAG e PDF
+# RAG + PDF
 sentence-transformers==2.7.0
 faiss-cpu==1.8.0.post1
 PyPDF2==3.0.1
 pymupdf==1.24.9
 pillow==10.4.0
 
-# Modo leve (sem chave)
+# Modelo leve (Transformers) - CPU
 transformers==4.43.3
 accelerate==0.33.0
-torch==2.3.1
+# Torch compatível com Python 3.13 do Cloud
+torch==2.8.0
 sentencepiece==0.2.0
 
 # Utilidades
 python-dotenv==1.0.1
-reportlab==3.6.13
+
+# Export sem dependência nativa (em vez de reportlab)
+fpdf2==2.7.9
