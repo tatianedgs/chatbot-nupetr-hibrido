@@ -29,7 +29,7 @@ if 'messages' not in st.session_state: st.session_state.messages = []
 if 'mode' not in st.session_state: st.session_state.mode = 'leve'
 if 'openai_key' not in st.session_state: st.session_state.openai_key = ''
 
-# ---------- Utils: limpar/exportar (definidas ANTES) ----------
+# ---------- Utils (definir ANTES de usar) ----------
 def clear_history():
     st.session_state.messages = [{"role":"assistant","content":"Como posso ajudar com suas dúvidas sobre pareceres?"}]
 
@@ -61,7 +61,6 @@ def export_chat_to_html(messages) -> bytes:
 
 # ---------- Sidebar ----------
 with st.sidebar:
-    # logo com fallback
     logo_path = "img/idema.jpeg"
     if os.path.exists(logo_path):
         try: st.image(logo_path, width=160, caption="IDEMA/RN")
@@ -75,23 +74,13 @@ with st.sidebar:
     st.caption("Assistente RAG para PDFs internos")
 
     st.subheader("📄 PDFs")
-    pdfs = st.file_uploader(
-        "Selecione (padrão: tipoLicenca_tipoEmpreendimento.pdf)",
-        type=["pdf"], accept_multiple_files=True
-    )
+    pdfs = st.file_uploader("Selecione (padrão: tipoLicenca_tipoEmpreendimento.pdf)", type=["pdf"], accept_multiple_files=True)
 
     st.subheader("🛠️ Modo do modelo")
     modo = st.radio("Escolha o modo:", ["OpenAI (com chave)", "Modelo Leve (sem chave)"])
     if modo.startswith("OpenAI"):
         st.session_state.mode = 'openai'
-        st.session_state.openai_key = st.text_input("OPENAI_API_KEY", type="password", help="Cole a chave (sk-...)")
-        with st.expander("🔑 Como obter sua OpenAI API Key"):
-            st.markdown(
-                "- Abra **https://platform.openai.com**  \n"
-                "- Menu **API Keys** → **Create new secret key**  \n"
-                "- Copie a chave (`sk-...`) e cole acima.  \n"
-                "- No Streamlit Cloud, salve em **Settings → Secrets**."
-            )
+        st.session_state.openai_key = st.text_input("OPENAI_API_KEY", type="password")
     else:
         st.session_state.mode = 'leve'
         st.session_state.openai_key = ''
@@ -107,7 +96,7 @@ with st.sidebar:
             if all_chunks:
                 st.session_state.kb = build_or_update_index(st.session_state.kb, all_chunks, all_metas, embeddings)
                 st.session_state.pdfs_processed = True
-                st.success("PDFs processados. Preencha os filtros e pergunte no chat.")
+                st.success("PDFs processados. Faça sua pergunta no chat.")
             else:
                 st.warning("Nenhum texto legível extraído.")
 
