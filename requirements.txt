@@ -1,4 +1,6 @@
+# Web app
 streamlit==1.37.1
+rich==13.9.4        # Streamlit 1.37 pede rich<14
 
 # RAG e PDF
 langchain==0.2.13
@@ -9,11 +11,10 @@ faiss-cpu==1.8.0.post1
 PyPDF2==3.0.1
 pillow==10.4.0
 
-# Modelo leve (Transformers em CPU)
+# Modelos locais leves (sem chave)
 transformers==4.43.3
 accelerate==0.33.0
-torch==2.8.0     # compatível com Python 3.13 no Cloud
+torch==2.5.1        # compatível com Python 3.13 no Streamlit Cloud
 
-# OpenAI e utilidades
-openai>=1.30.0
+# Utilidades
 python-dotenv==1.0.1
