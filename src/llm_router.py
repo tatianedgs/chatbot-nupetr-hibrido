@@ -1,59 +1,45 @@
+# src/llm_router.py
 # -*- coding: utf-8 -*-
 from typing import Optional
-from dataclasses import dataclass
-import re
+from langchain_openai import OpenAIEmbeddings, ChatOpenAI
+from langchain_community.embeddings import HuggingFaceEmbeddings
+from langchain.chains.question_answering import load_qa_chain
+from transformers import AutoTokenizer, AutoModelForSeq2SeqLM
+import torch
 
-# OpenAI oficial (1.x)
-from openai import OpenAI
+# Prompt simples diretamente aqui para evitar import circular
+QA_TEMPLATE = (
+    "Você é um assistente técnico do IDEMA. Responda SEMPRE em português claro e objetivo.\n"
+    "Use apenas o contexto abaixo; se não houver informação suficiente, diga que não encontrou no documento.\n\n"
+    "=== CONTEXTO ===\n{context}\n=== FIM CONTEXTO ===\n\n"
+    "Pergunta: {question}\n"
+    "Resposta (máx. 6 linhas, cite a seção/página se possível):"
+)
 
-# para o modo leve extrativo (sem LLM)
-from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.metrics.pairwise import cosine_similarity
-
-
-# (mantido por compatibilidade – não usamos mais embeddings externos aqui)
 def make_embeddings(mode: str, openai_api_key: Optional[str]):
-    return None
+    """Seleciona embeddings: OpenAI (se houver chave) ou Sentence-Transformers."""
+    if mode == "openai" and openai_api_key:
+        return OpenAIEmbeddings(api_key=openai_api_key, model="text-embedding-3-small")
+    return HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
 
+def make_chain_openai(openai_api_key: str):
+    """Retorna uma QA chain para LangChain usando ChatOpenAI (gpt-4o-mini por padrão)."""
+    from langchain.prompts import PromptTemplate
+    prompt = PromptTemplate.from_template(QA_TEMPLATE)
+    llm = ChatOpenAI(api_key=openai_api_key, model="gpt-4o-mini", temperature=0)
+    return load_qa_chain(llm, chain_type="stuff", prompt=prompt)
 
-def ask_openai(context: str, question: str, api_key: str, model: str = "gpt-4o-mini") -> str:
-    """
-    Faz uma resposta 'stuff' simples: contexto + pergunta.
-    """
-    client = OpenAI(api_key=api_key)
-    prompt = (
-        "Você é um assistente técnico do IDEMA. Responda SEMPRE em português, curto e objetivo, "
-        "usando somente o CONTEXTO fornecido. Se não houver informação suficiente, diga que não encontrou no documento.\n\n"
-        f"=== CONTEXTO ===\n{context}\n=== FIM CONTEXTO ===\n\n"
-        f"Pergunta: {question}\n"
-        "Resposta (máx. 6 linhas, cite página/arquivo se possível):"
-    )
-    resp = client.responses.create(
-        model=model,
-        input=prompt,
-    )
-    return resp.output_text.strip()
-
-
-@dataclass
 class LiteLocal:
-    """
-    Modo leve SEM CHAVE: resposta extrativa.
-    Seleciona as frases do contexto mais parecidas com a pergunta (TF-IDF cosseno).
-    """
-    max_sentences: int = 4
+    """Modelo leve sem chave (Transformers) – bom para Streamlit Cloud (CPU)."""
+    def __init__(self, model_name: str = "google/mt5-small"):
+        self.tok = AutoTokenizer.from_pretrained(model_name)
+        self.mdl = AutoModelForSeq2SeqLM.from_pretrained(model_name)
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.mdl.to(self.device)
 
     def answer(self, context: str, question: str) -> str:
-        # quebra o contexto em frases simples
-        sents = [s.strip() for s in re.split(r'(?<=[\.\!\?])\s+', context) if s.strip()]
-        if not sents:
-            return "Não encontrei essa informação nos PDFs carregados."
-        # TF-IDF entre pergunta e frases
-        vect = TfidfVectorizer(max_features=15000, ngram_range=(1, 2), lowercase=True)
-        X = vect.fit_transform(sents + [question])
-        sims = cosine_similarity(X[-1], X[:-1]).ravel()
-        # pega top N frases
-        idxs = sims.argsort()[::-1][: self.max_sentences]
-        top = [sents[i] for i in idxs if sents[i]]
-        txt = " ".join(top).strip()
-        return txt or "Não encontrei essa informação nos PDFs carregados."
+        prompt = QA_TEMPLATE.format(context=context, question=question)
+        inputs = self.tok(prompt, return_tensors="pt", truncation=True).to(self.device)
+        outputs = self.mdl.generate(**inputs, max_new_tokens=240)
+        text = self.tok.decode(outputs[0], skip_special_tokens=True)
+        return text.split("Resposta:", 1)[-1].strip() if "Resposta:" in text else text.strip()
