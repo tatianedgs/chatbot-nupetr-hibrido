@@ -30,10 +30,6 @@ if 'openai_key' not in st.session_state: st.session_state.openai_key = ''
 if 'openai_model' not in st.session_state: st.session_state.openai_model = 'gpt-4o-mini'
 
 # ---------- Utils: exportar PDF ----------
-from reportlab.lib.pagesizes import letter
-from reportlab.lib.styles import getSampleStyleSheet
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Image as RLImage
-from reportlab.lib.units import inch
 
 def _on_page(canvas, doc):
     img_path = "img/idema.jpeg"
@@ -190,3 +186,4 @@ if user_q:
         with st.chat_message("assistant"):
             st.markdown(f'<div class="assistant-bubble chat-gap">{answer}</div>', unsafe_allow_html=True)
         st.session_state.messages.append({"role": "assistant", "content": answer})
+
