@@ -1,12 +1,20 @@
-# App web
 streamlit==1.37.1
 
-# Leitura de PDF
+# RAG e PDF
+langchain==0.2.13
+langchain-community==0.2.12
+langchain-openai==0.1.21
+sentence-transformers==2.7.0
+faiss-cpu==1.8.0.post1
 PyPDF2==3.0.1
 pillow==10.4.0
 
-# OpenAI (modo com chave)
-openai>=1.30.0
+# Modelo leve (sem chave)
+transformers==4.43.3
+accelerate==0.33.0
+# Deixe o pip pegar a wheel de CPU
+torch==2.3.1
 
-# Recuperação simples (TF-IDF + cosseno)
-scikit-learn==1.5.2
+# OpenAI e utilidades
+openai>=1.30.0
+python-dotenv==1.0.1
