@@ -30,6 +30,59 @@ if 'openai_key' not in st.session_state: st.session_state.openai_key = ''
 if 'openai_model' not in st.session_state: st.session_state.openai_model = 'gpt-4o-mini'
 
 # ---------- Utils: exportar PDF ----------
+st.subheader("💬 Ações do chat")
+st.button("🧹 Limpar histórico", on_click=clear_history)
+if st.session_state.messages:
+    html_bytes = export_chat_to_html(st.session_state.messages)
+    st.download_button(
+        "📥 Exportar conversa (HTML)",
+        data=html_bytes,
+        file_name="chat_nupetr.html",
+        mime="text/html",
+        help="Baixe e use 'Imprimir → Salvar como PDF' no navegador"
+    )
+
+def export_chat_to_html(messages) -> bytes:
+    """Gera um HTML simples da conversa (pronto para 'Imprimir como PDF' no navegador)."""
+    # tenta embutir o logo se existir
+    logo_b64 = ""
+    logo_path = "img/idema.jpeg"
+    if os.path.exists(logo_path):
+        try:
+            with open(logo_path, "rb") as f:
+                logo_b64 = base64.b64encode(f.read()).decode("utf-8")
+        except Exception:
+            logo_b64 = ""
+
+    styles = """
+    <style>
+      body{ font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, Noto Sans, 'Liberation Sans', sans-serif;
+            background:#F4F9F4; color:#0F2310; margin:24px; }
+      .banner{ padding:14px 18px; border-radius:14px; color:#fff; font-weight:700; font-size:20px;
+               background:linear-gradient(90deg,#2E7D32,#66BB6A); display:flex; align-items:center; gap:10px; }
+      .msg{ margin:10px 0; padding:10px 12px; border-radius:12px; }
+      .user{ background:#E6F4EA; }
+      .assistant{ background:#FFFFFF; border:1px solid #DDE6DD; }
+      .who{ font-weight:600; margin-bottom:6px; }
+    </style>
+    """
+
+    logo_html = f'<img src="data:image/jpeg;base64,{logo_b64}" width="100" style="vertical-align:middle;border-radius:8px" />' if logo_b64 else ""
+    header = f"""
+    <div class="banner">{logo_html}<span>🛢️ NUPETR/IDEMA — Chat de Parecer Técnico</span></div>
+    <p style="opacity:.8">As respostas citam trechos do PDF. Valide sempre as informações.</p>
+    """
+
+    body = []
+    for m in messages:
+        who = "Você" if m["role"] == "user" else "Assistente"
+        klass = "user" if m["role"] == "user" else "assistant"
+        # escapinho básico
+        txt = (m["content"] or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+        body.append(f'<div class="msg {klass}"><div class="who">{who}</div><div>{txt}</div></div>')
+
+    html = f"<!doctype html><html><head><meta charset='utf-8'>{styles}</head><body>{header}{''.join(body)}</body></html>"
+    return html.encode("utf-8")
 
 def _on_page(canvas, doc):
     img_path = "img/idema.jpeg"
@@ -186,4 +239,5 @@ if user_q:
         with st.chat_message("assistant"):
             st.markdown(f'<div class="assistant-bubble chat-gap">{answer}</div>', unsafe_allow_html=True)
         st.session_state.messages.append({"role": "assistant", "content": answer})
+
 
