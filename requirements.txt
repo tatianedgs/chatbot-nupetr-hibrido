@@ -9,11 +9,10 @@ faiss-cpu==1.8.0.post1
 PyPDF2==3.0.1
 pillow==10.4.0
 
-# Modelo leve (sem chave)
+# Modelo leve (Transformers em CPU)
 transformers==4.43.3
 accelerate==0.33.0
-# Deixe o pip pegar a wheel de CPU
-torch==2.3.1
+torch==2.8.0     # compatível com Python 3.13 no Cloud
 
 # OpenAI e utilidades
 openai>=1.30.0
