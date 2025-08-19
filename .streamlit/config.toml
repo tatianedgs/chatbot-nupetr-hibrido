@@ -1,5 +1,5 @@
 [server]
-fileWatcherType = "none"   # ou "poll" se preferir
+fileWatcherType = "none"   # (ou "poll")
 
 [theme]
 primaryColor="#2E7D32"
