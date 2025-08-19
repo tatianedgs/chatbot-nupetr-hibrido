@@ -1,14 +1,12 @@
-# --- Básico do app web ---
+# App web
 streamlit==1.37.1
 
-# PDF e exportador de PDF
+# Leitura de PDF
 PyPDF2==3.0.1
-pymupdf==1.24.9
-reportlab==3.6.13
 pillow==10.4.0
 
 # OpenAI (modo com chave)
 openai>=1.30.0
 
-# Recuperação sem FAISS/transformers (100% Python)
-scikit-learn==1.7.1
+# Recuperação simples (TF-IDF + cosseno)
+scikit-learn==1.5.2
